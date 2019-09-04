@@ -700,7 +700,6 @@ class InputPlayer extends React.Component {
 export class Player extends React.Component {
     constructor(props) {
         super(props);
-        this.handleTimeout = this.handleTimeout.bind(this);
         this.handlePacket = this.handlePacket.bind(this);
         this.handleError = this.handleError.bind(this);
         this.handleTitleChange = this.handleTitleChange.bind(this);
@@ -714,7 +713,7 @@ export class Player extends React.Component {
         this.fastForwardToEnd = this.fastForwardToEnd.bind(this);
         this.skipFrame = this.skipFrame.bind(this);
         this.handleKeyDown = this.handleKeyDown.bind(this);
-        this.sync = this.sync.bind(this);
+        this.playRecording = this.playRecording.bind(this);
         this.zoomIn = this.zoomIn.bind(this);
         this.zoomOut = this.zoomOut.bind(this);
         this.fitTo = this.fitTo.bind(this);
@@ -766,8 +765,6 @@ export class Player extends React.Component {
         this.pktIdx = 0;
         /* Current packet, or null if not retrieved */
         this.pkt = null;
-        /* Timeout ID of the current packet, null if none */
-        this.timeout = null;
 
         /* True if the next packet should be output without delay */
         this.skip = false;
@@ -778,12 +775,12 @@ export class Player extends React.Component {
          * Recording time, ms, or null if not fast-forwarding.
          */
         this.fastForwardTo = null;
+
+        /* Timer used for playback */
+        this.timer = null;
     }
 
     reset() {
-        /* Clear any pending timeouts */
-        this.clearTimeout();
-
         /* Reset the terminal */
         this.state.term.reset();
 
@@ -813,19 +810,6 @@ export class Player extends React.Component {
                 .fail(this.handleError);
     }
 
-    /* Set next packet timeout, ms */
-    setTimeout(ms) {
-        this.timeout = window.setTimeout(this.handleTimeout, ms);
-    }
-
-    /* Clear next packet timeout */
-    clearTimeout() {
-        if (this.timeout !== null) {
-            window.clearTimeout(this.timeout);
-            this.timeout = null;
-        }
-    }
-
     /* Handle packet retrieval error */
     handleError(error) {
         if (error !== null) {
@@ -836,13 +820,6 @@ export class Player extends React.Component {
 
     /* Handle packet retrieval success */
     handlePacket() {
-        this.sync();
-    }
-
-    /* Handle arrival of packet output time */
-    handleTimeout() {
-        this.timeout = null;
-        this.sync();
     }
 
     /* Handle terminal title change */
@@ -874,14 +851,15 @@ export class Player extends React.Component {
     }
 
     /* Synchronize playback */
-    sync() {
+    playRecording() {
         let locDelay;
-
-        /* We are already called, don't call us with timeout */
-        this.clearTimeout();
 
         /* Forever */
         for (;;) {
+            if (this.state.paused) {
+                /* We should never reach here */
+                return;
+            }
             /* Get another packet to output, if none */
             for (; this.pkt === null; this.pktIdx++) {
                 let pkt = this.buf.pktList[this.pktIdx];
@@ -902,6 +880,9 @@ export class Player extends React.Component {
 
                 this.pkt = pkt;
             }
+
+            /* Set the chosen speed */
+            this.speed = Math.pow(2, this.state.speedExp);
 
             /* Get the current local time */
             let nowLocTS = performance.now();
@@ -930,9 +911,6 @@ export class Player extends React.Component {
                     this.fastForwardTo = null;
                     continue;
                 }
-            /* Else, if we are paused */
-            } else if (this.state.paused) {
-                return;
             } else {
                 this.recTS += locDelay * this.speed;
                 let pktRecDelay = this.pkt.pos - this.recTS;
@@ -941,7 +919,6 @@ export class Player extends React.Component {
                 /* If we're more than 5 ms early for this packet */
                 if (pktLocDelay > 5) {
                     /* Call us again on time, later */
-                    this.setTimeout(pktLocDelay);
                     return;
                 }
             }
@@ -972,11 +949,16 @@ export class Player extends React.Component {
     }
 
     play() {
-        this.setState({paused: false});
+        /* Arm timer */
+        this.timer = window.setInterval(this.playRecording, 100);
+        /* Reset to handle returning from paused state */
+        this.locTS = performance.now();
     }
 
     pause() {
-        this.setState({paused: true});
+        if (this.timer) {
+            window.clearInterval(this.timer);
+        }
     }
 
     speedUp() {
@@ -1004,12 +986,10 @@ export class Player extends React.Component {
     rewindToStart() {
         this.clearInputPlayer();
         this.reset();
-        this.sync();
     }
 
     fastForwardToEnd() {
         this.fastForwardTo = Infinity;
-        this.sync();
     }
 
     fastForwardToTS(ts) {
@@ -1017,12 +997,10 @@ export class Player extends React.Component {
             this.reset();
         }
         this.fastForwardTo = ts;
-        this.sync();
     }
 
     skipFrame() {
         this.skip = true;
-        this.sync();
     }
 
     handleKeyDown(event) {
@@ -1160,27 +1138,16 @@ export class Player extends React.Component {
         }
         /* Open the terminal */
         this.state.term.open(this.refs.term);
-        window.setInterval(this.sync, 100);
         /* Reset playback */
         this.reset();
         this.fastForwardToTS(0);
     }
 
-    componentWillUpdate(nextProps, nextState) {
-        /* If we changed pause state or speed exponent */
-        if (nextState.paused != this.state.paused ||
-            nextState.speedExp != this.state.speedExp) {
-            this.sync();
-        }
-    }
-
     componentDidUpdate(prevProps, prevState) {
-        /* If we changed pause state or speed exponent */
-        if (this.state.paused != prevState.paused ||
-            this.state.speedExp != prevState.speedExp) {
-            this.speed = Math.pow(2, this.state.speedExp);
-            this.sync();
+        if (this.state.paused != prevState.paused) {
+            this.state.paused ? this.pause() : this.play();
         }
+
         if (this.state.input != prevState.input) {
             scrollToBottom("input-textarea");
         }
@@ -1362,5 +1329,8 @@ export class Player extends React.Component {
         this.buf.stop();
         window.removeEventListener("keydown", this.handleKeyDown, false);
         this.state.term.destroy();
+        if (this.timer) {
+            window.clearInterval(this.timer);
+        }
     }
 }
