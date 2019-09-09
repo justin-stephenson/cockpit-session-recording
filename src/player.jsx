@@ -588,12 +588,12 @@ class Slider extends React.Component {
         this.slider.slider('on', 'slideStop', this.slideStop);
     }
 
-    componentDidUpdate() {
+    componentDidUpdate(prevProps, prevState) {
         if (this.props.length) {
             this.slider.slider('enable');
             this.slider.slider('setAttribute', 'max', this.props.length);
         }
-        if (this.props.mark) {
+        if (this.props.mark != prevProps.mark) {
             this.slider.slider('setValue', this.props.mark);
         }
     }
@@ -992,6 +992,7 @@ export class Player extends React.Component {
 
     fastForwardToEnd() {
         this.fastForwardTo = Infinity;
+        this.setState({currentTsPost: Infinity});
     }
 
     fastForwardToTS(ts) {
