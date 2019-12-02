@@ -18,13 +18,13 @@
 */
 "use strict";
 import React from 'react';
+import './player.css';
+import { Terminal as Term } from 'xterm';
 let cockpit = require("cockpit");
 let _ = cockpit.gettext;
 let moment = require("moment");
-let Term = require("term.js-cockpit");
 let Journal = require("journal");
 let $ = require("jquery");
-require("console.css");
 require("bootstrap-slider");
 
 let padInt = function (n, w) {
@@ -553,58 +553,6 @@ let PacketBuffer = class {
     }
 };
 
-class Slider extends React.Component {
-    constructor(props) {
-        super(props);
-        this.slideStart = this.slideStart.bind(this);
-        this.slideStop = this.slideStop.bind(this);
-        this.slider = null;
-        this.state = {
-            paused: false,
-        };
-    }
-
-    slideStart(e) {
-        this.setState({paused: this.props.paused});
-        this.props.pause();
-    }
-
-    slideStop(e) {
-        if (this.props.fastForwardFunc) {
-            this.props.fastForwardFunc(e);
-            if (this.state.paused === false) {
-                this.props.play();
-            }
-        }
-    }
-
-    componentDidMount() {
-        this.slider = $("#slider").slider({
-            value: 0,
-            tooltip: "hide",
-            enabled: false,
-        });
-        this.slider.slider('on', 'slideStart', this.slideStart);
-        this.slider.slider('on', 'slideStop', this.slideStop);
-    }
-
-    componentDidUpdate() {
-        if (this.props.length) {
-            this.slider.slider('enable');
-            this.slider.slider('setAttribute', 'max', this.props.length);
-        }
-        if (this.props.mark) {
-            this.slider.slider('setValue', this.props.mark);
-        }
-    }
-
-    render () {
-        return (
-            <input id="slider" type="text" />
-        );
-    }
-}
-
 function SearchEntry(props) {
     return (
         <span className="search-result"><a onClick={(e) => props.fastForwardToTS(props.pos, e)}>{formatDuration(props.pos)}</a></span>
@@ -697,6 +645,12 @@ class InputPlayer extends React.Component {
     }
 }
 
+function Slider(props) {
+    return (
+        <input id="slider" type="text" />
+    );
+}
+
 export class Player extends React.Component {
     constructor(props) {
         super(props);
@@ -713,6 +667,9 @@ export class Player extends React.Component {
         this.speedReset = this.speedReset.bind(this);
         this.fastForwardToEnd = this.fastForwardToEnd.bind(this);
         this.skipFrame = this.skipFrame.bind(this);
+        this.initSlider = this.initSlider.bind(this);
+        this.slideStart = this.slideStart.bind(this);
+        this.slideStop = this.slideStop.bind(this);
         this.handleKeyDown = this.handleKeyDown.bind(this);
         this.sync = this.sync.bind(this);
         this.zoomIn = this.zoomIn.bind(this);
@@ -734,7 +691,6 @@ export class Player extends React.Component {
             paused:             true,
             /* Speed exponent */
             speedExp:           0,
-            container_width:    630,
             scale_initial:      1,
             scale_lock:         false,
             term_top_style:     "50%",
@@ -744,19 +700,21 @@ export class Player extends React.Component {
             term_zoom_max:      false,
             term_zoom_min:      false,
             drag_pan:           false,
-            containerWidth: 630,
-            currentTsPost:  0,
+            containerWidth: 800,
             scale:          1,
             input:          "",
             mark:           0,
         };
 
-        this.containerHeight = 290;
+        this.containerHeight = 400;
 
         /* Auto-loading buffer of recording's packets */
         this.error_service = new ErrorService();
         this.reportError = this.error_service.addMessage;
         this.buf = new PacketBuffer(this.props.matchList, this.reportError);
+
+        /* Slider component */
+        this.slider = null;
 
         /* Current recording time, ms */
         this.recTS = 0;
@@ -770,6 +728,8 @@ export class Player extends React.Component {
         /* Timeout ID of the current packet, null if none */
         this.timeout = null;
 
+        this.currentTsPost = 0;
+
         /* True if the next packet should be output without delay */
         this.skip = false;
         /* Playback speed */
@@ -779,6 +739,9 @@ export class Player extends React.Component {
          * Recording time, ms, or null if not fast-forwarding.
          */
         this.fastForwardTo = null;
+
+        /* Track paused state prior to slider movement */
+        this.pausedBeforeSlide = true;
     }
 
     reset() {
@@ -800,7 +763,7 @@ export class Player extends React.Component {
 
         /* Move to beginning of recording */
         this.recTS = 0;
-        this.setState({currentTsPost: parseInt(this.recTS)});
+        this.currentTsPost = parseInt(this.recTS);
         /* Start the playback time */
         this.locTS = performance.now();
 
@@ -917,6 +880,7 @@ export class Player extends React.Component {
             /* Sync to the local time */
             this.locTS = nowLocTS;
 
+            this.slider.slider('setAttribute', 'max', this.buf.pos);
             /* If we are skipping one packet's delay */
             if (this.skip) {
                 this.skip = false;
@@ -938,7 +902,8 @@ export class Player extends React.Component {
                 this.recTS += locDelay * this.speed;
                 let pktRecDelay = this.pkt.pos - this.recTS;
                 let pktLocDelay = pktRecDelay / this.speed;
-                this.setState({currentTsPost: parseInt(this.recTS)});
+                this.currentTsPost = parseInt(this.recTS);
+                this.slider.slider('setValue', this.currentTsPost);
                 /* If we're more than 5 ms early for this packet */
                 if (pktLocDelay > 5) {
                     /* Call us again on time, later */
@@ -948,8 +913,11 @@ export class Player extends React.Component {
             }
 
             /* Send packet ts to the top */
-            this.props.onTsChange(this.pkt.pos);
-            this.setState({currentTsPost: parseInt(this.pkt.pos)});
+            if (this.props.logsEnabled) {
+                this.props.onTsChange(this.pkt.pos);
+            }
+            this.currentTsPost = parseInt(this.pkt.pos);
+            this.slider.slider('setValue', this.currentTsPost);
 
             /* Output the packet */
             if (this.pkt.is_io && !this.pkt.is_output) {
@@ -1006,6 +974,9 @@ export class Player extends React.Component {
         this.clearInputPlayer();
         this.reset();
         this.sync();
+        if (this.props.logsEnabled) {
+            this.props.onRewindStart();
+        }
     }
 
     fastForwardToEnd() {
@@ -1024,6 +995,36 @@ export class Player extends React.Component {
     skipFrame() {
         this.skip = true;
         this.sync();
+    }
+
+    initSlider() {
+        this.slider = $("#slider").slider({
+            value: 0,
+            tooltip: "hide",
+            enabled: false,
+        });
+        this.slider.slider('on', 'slideStart', this.slideStart);
+        this.slider.slider('on', 'slideStop', this.slideStop);
+        this.slider.slider('enable');
+    }
+
+    slideStart(e) {
+        /*
+         * Necessary because moving the slider position updates state.paused,
+         * which won't represent the actual paused state after this event is
+         * triggered
+         */
+        this.pausedBeforeSlide = this.state.paused;
+        this.pause();
+    }
+
+    slideStop(e) {
+        if (this.fastForwardToTS) {
+            this.fastForwardToTS(e);
+            if (this.pausedBeforeSlide === false) {
+                this.play();
+            }
+        }
     }
 
     handleKeyDown(event) {
@@ -1143,7 +1144,9 @@ export class Player extends React.Component {
             cols: this.state.cols,
             rows: this.state.rows,
             screenKeys: true,
-            useStyle: true
+            useStyle: true,
+            /* Exposes the xterm-accessibility-tree */
+            screenReaderMode: true,
         });
 
         term.on('title', this.handleTitleChange);
@@ -1163,6 +1166,7 @@ export class Player extends React.Component {
         /* Reset playback */
         this.reset();
         this.fastForwardToTS(0);
+        this.initSlider();
     }
 
     componentWillUpdate(nextProps, nextState) {
@@ -1230,7 +1234,7 @@ export class Player extends React.Component {
             <React.Fragment>
                 <div className="row">
                     <div id="recording-wrap">
-                        <div className="col-md-6 player-wrap">
+                        <div className="col-md-7 player-wrap">
                             <div ref="wrapper" className="panel panel-default">
                                 <div className="panel-heading">
                                     <span>{this.state.title}</span>
@@ -1241,53 +1245,53 @@ export class Player extends React.Component {
                                     </div>
                                 </div>
                                 <div className="panel-footer">
-                                    <Slider length={this.buf.pos} mark={this.state.currentTsPost} fastForwardFunc={this.fastForwardToTS} play={this.play} pause={this.pause} paused={this.state.paused} />
-                                    <button title="Play/Pause - Hotkey: p" type="button" ref="playbtn"
+                                    <Slider />
+                                    <button id="player-play-pause" title="Play/Pause - Hotkey: p" type="button" ref="playbtn"
                                             className="btn btn-default btn-lg margin-right-btn play-btn"
                                             onClick={this.playPauseToggle}>
                                         <i className={"fa fa-" + (this.state.paused ? "play" : "pause")}
                                            aria-hidden="true" />
                                     </button>
-                                    <button title="Skip Frame - Hotkey: ." type="button"
+                                    <button id="player-skip-frame" title="Skip Frame - Hotkey: ." type="button"
                                             className="btn btn-default btn-lg margin-right-btn"
                                             onClick={this.skipFrame}>
                                         <i className="fa fa-step-forward" aria-hidden="true" />
                                     </button>
-                                    <button title="Restart Playback - Hotkey: Shift-R" type="button"
+                                    <button id="player-restart" title="Restart Playback - Hotkey: Shift-R" type="button"
                                             className="btn btn-default btn-lg" onClick={this.rewindToStart}>
                                         <i className="fa fa-fast-backward" aria-hidden="true" />
                                     </button>
-                                    <button title="Fast-forward to end - Hotkey: Shift-G" type="button"
+                                    <button id="player-fast-forward" title="Fast-forward to end - Hotkey: Shift-G" type="button"
                                             className="btn btn-default btn-lg margin-right-btn"
                                             onClick={this.fastForwardToEnd}>
                                         <i className="fa fa-fast-forward" aria-hidden="true" />
                                     </button>
-                                    <button title="Speed /2 - Hotkey: {" type="button"
+                                    <button id="player-speed-down" title="Speed /2 - Hotkey: {" type="button"
                                             className="btn btn-default btn-lg" onClick={this.speedDown}>
                                         /2
                                     </button>
-                                    <button title="Reset Speed - Hotkey: Backspace" type="button"
+                                    <button id="player-speed-reset" title="Reset Speed - Hotkey: Backspace" type="button"
                                             className="btn btn-default btn-lg" onClick={this.speedReset}>
                                         1:1
                                     </button>
-                                    <button title="Speed x2 - Hotkey: }" type="button"
+                                    <button id="player-speed-up" title="Speed x2 - Hotkey: }" type="button"
                                             className="btn btn-default btn-lg margin-right-btn"
                                             onClick={this.speedUp}>
                                         x2
                                     </button>
                                     <span>{speedStr}</span>
                                     <span style={to_right}>
-                                        <span className="session_time">{formatDuration(this.state.currentTsPost)} / {formatDuration(this.buf.pos)}</span>
-                                        <button title="Drag'n'Pan" type="button" className="btn btn-default btn-lg"
+                                        <span className="session_time">{formatDuration(this.currentTsPost)} / {formatDuration(this.buf.pos)}</span>
+                                        <button id="player-drag-pan" title="Drag'n'Pan" type="button" className="btn btn-default btn-lg"
                                             onClick={this.dragPan}>
                                             <i className={"fa fa-" + (this.state.drag_pan ? "hand-rock-o" : "hand-paper-o")}
                                                 aria-hidden="true" /></button>
-                                        <button title="Zoom In - Hotkey: =" type="button" className="btn btn-default btn-lg"
+                                        <button id="player-zoom-in" title="Zoom In - Hotkey: =" type="button" className="btn btn-default btn-lg"
                                             onClick={this.zoomIn} disabled={this.state.term_zoom_max}>
                                             <i className="fa fa-search-plus" aria-hidden="true" /></button>
-                                        <button title="Fit To - Hotkey: Z" type="button" className="btn btn-default btn-lg"
+                                        <button id="player-fit-to" title="Fit To - Hotkey: Z" type="button" className="btn btn-default btn-lg"
                                             onClick={this.fitTo}><i className="fa fa-expand" aria-hidden="true" /></button>
-                                        <button title="Zoom Out - Hotkey: -" type="button" className="btn btn-default btn-lg"
+                                        <button id="player-zoom-out" title="Zoom Out - Hotkey: -" type="button" className="btn btn-default btn-lg"
                                             onClick={this.zoomOut} disabled={this.state.term_zoom_min}>
                                             <i className="fa fa-search-minus" aria-hidden="true" /></button>
                                     </span>
@@ -1303,7 +1307,7 @@ export class Player extends React.Component {
                             </div>
                         </div>
                     </div>
-                    <div className="col-md-6">
+                    <div className="col-md-5">
                         <div className="panel panel-default">
                             <div className="panel-heading">
                                 <span>{_("Recording")}</span>

@@ -400,6 +400,33 @@ class Recording extends React.Component {
     constructor(props) {
         super(props);
         this.goBackToList = this.goBackToList.bind(this);
+        this.handleTsChange = this.handleTsChange.bind(this);
+        this.handleLogTsChange = this.handleLogTsChange.bind(this);
+        this.handleLogsClick = this.handleLogsClick.bind(this);
+        this.handleLogsReset = this.handleLogsReset.bind(this);
+        this.state = {
+            curTs: null,
+            logsTs: null,
+            logsEnabled: false,
+        };
+    }
+
+    handleTsChange(ts) {
+        this.setState({curTs: ts});
+    }
+
+    handleLogTsChange(ts) {
+        this.setState({logsTs: ts});
+    }
+
+    handleLogsClick() {
+        this.setState({logsEnabled: !this.state.logsEnabled});
+    }
+
+    handleLogsReset() {
+        this.setState({logsEnabled: false}, () => {
+            this.setState({logsEnabled: true});
+        });
     }
 
     goBackToList() {
@@ -422,23 +449,39 @@ class Recording extends React.Component {
                 (<Player.Player
                     ref="player"
                     matchList={this.props.recording.matchList}
-                    logsTs={this.props.logsTs}
+                    logsTs={this.logsTs}
                     search={this.props.search}
-                    onTsChange={this.props.onTsChange}
-                    recording={r} />);
+                    onTsChange={this.handleTsChange}
+                    recording={r}
+                    logsEnabled={this.state.logsEnabled}
+                    onRewindStart={this.handleLogsReset} />);
 
             return (
-                <div className="container-fluid">
-                    <div className="row">
-                        <div className="col-md-12">
-                            <ol className="breadcrumb">
-                                <li><a onClick={this.goBackToList}>{_("Session Recording")}</a></li>
-                                <li className="active">{_("Session")}</li>
-                            </ol>
+                <React.Fragment>
+                    <div className="container-fluid">
+                        <div className="row">
+                            <div className="col-md-12">
+                                <ol className="breadcrumb">
+                                    <li><a onClick={this.goBackToList}>{_("Session Recording")}</a></li>
+                                    <li className="active">{_("Session")}</li>
+                                </ol>
+                            </div>
+                            {player}
                         </div>
+                        <div className="row">
+                            <div className="col-md-12">
+                                <button className="btn btn-default" style={{"float":"left"}} onClick={this.handleLogsClick}>{_("Logs View")}</button>
+                            </div>
+                        </div>
+                        {this.state.logsEnabled === true &&
+                        <div className="row">
+                            <div className="col-md-12">
+                                <Logs recording={this.props.recording} curTs={this.state.curTs} jumpToTs={this.handleLogTsChange} />
+                            </div>
+                        </div>
+                        }
                     </div>
-                    {player}
-                </div>
+                </React.Fragment>
             );
         }
     }
@@ -476,7 +519,7 @@ class RecordingList extends React.Component {
         } else {
             this.setState({
                 sorting_field: event.currentTarget.id,
-                sorting_asc: 'asc'
+                sorting_asc: true,
             });
         }
     }
@@ -485,17 +528,20 @@ class RecordingList extends React.Component {
         let field = this.state.sorting_field;
         let asc = this.state.sorting_asc;
         let list = this.props.list.slice();
+        let isNumeric;
 
-        if (this.state.sorting_field != null) {
-            if (asc) {
-                list.sort(function(a, b) {
-                    return a[field] > b[field];
-                });
-            } else {
-                list.sort(function(a, b) {
-                    return a[field] < b[field];
-                });
-            }
+        if (field === "start" || field === "end" || field === "duration") {
+            isNumeric = true;
+        }
+
+        if (isNumeric) {
+            list.sort((a, b) => a[field] - b[field]);
+        } else {
+            list.sort((a, b) => (a[field] > b[field]) ? 1 : -1);
+        }
+
+        if (!asc) {
+            list.reverse();
         }
 
         return list;
@@ -577,8 +623,6 @@ class View extends React.Component {
         this.onLocationChanged = this.onLocationChanged.bind(this);
         this.journalctlIngest = this.journalctlIngest.bind(this);
         this.handleInputChange = this.handleInputChange.bind(this);
-        this.handleTsChange = this.handleTsChange.bind(this);
-        this.handleLogTsChange = this.handleLogTsChange.bind(this);
         this.handleDateSinceChange = this.handleDateSinceChange.bind(this);
         this.openConfig = this.openConfig.bind(this);
         /* Journalctl instance */
@@ -603,8 +647,6 @@ class View extends React.Component {
             /* filter values end */
             error_tlog_uid: false,
             diff_hosts: false,
-            curTs: null,
-            logsTs: null,
         };
     }
 
@@ -719,7 +761,11 @@ class View extends React.Component {
      * Assumes journalctl is not running.
      */
     journalctlStart() {
-        let matches = ["_UID=" + this.uid, "+", "_EXE=/usr/bin/tlog-rec-session", "+", "_EXE=/usr/bin/tlog-rec", "+", "SYSLOG_IDENTIFIER=-tlog-rec-session"];
+        let matches = ["_COMM=tlog-rec",
+            /* Strings longer than TASK_COMM_LEN (16) characters
+             * are truncated (man proc) */
+            "_COMM=tlog-rec-sessio"];
+
         if (this.state.username && this.state.username !== "") {
             matches.push("TLOG_USER=" + this.state.username);
         }
@@ -727,7 +773,7 @@ class View extends React.Component {
             matches.push("_HOSTNAME=" + this.state.hostname);
         }
 
-        let options = {follow: true, count: "all", merge: true};
+        let options = {follow: false, count: "all", merge: true};
 
         if (this.state.date_since && this.state.date_since !== "") {
             options['since'] = this.state.date_since;
@@ -803,14 +849,6 @@ class View extends React.Component {
 
     handleDateUntilChange(date) {
         cockpit.location.go([], $.extend(cockpit.location.options, {date_until: date}));
-    }
-
-    handleTsChange(ts) {
-        this.setState({curTs: ts});
-    }
-
-    handleLogTsChange(ts) {
-        this.setState({logsTs: ts});
     }
 
     openConfig() {
@@ -890,6 +928,8 @@ class View extends React.Component {
                                     <td>
                                         <Datetimepicker value={this.state.date_until} onChange={this.handleDateUntilChange} />
                                     </td>
+                                </tr>
+                                <tr>
                                     <td className="top">
                                         <label className="control-label" htmlFor="search">Search</label>
                                     </td>
@@ -943,15 +983,7 @@ class View extends React.Component {
         } else {
             return (
                 <React.Fragment>
-                    <Recording recording={this.recordingMap[this.state.recordingID]} onTsChange={this.handleTsChange} logsTs={this.state.logsTs} search={this.state.search} />
-                    <div className="container-fluid">
-                        <div className="row">
-                            <div className="col-md-12">
-                                <Logs recording={this.recordingMap[this.state.recordingID]} curTs={this.state.curTs}
-                                      jumpToTs={this.handleLogTsChange} />
-                            </div>
-                        </div>
-                    </div>
+                    <Recording recording={this.recordingMap[this.state.recordingID]} search={this.state.search} />
                 </React.Fragment>
             );
         }
