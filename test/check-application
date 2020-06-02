@@ -143,9 +143,9 @@ class TestApplication(MachineCase):
         b.click("#player-restart")
         b.click("#player-play-pause")
         b.click("#player-play-pause")
-        b.wait_timeout(30000)
+        b.wait_timeout(10)
         # Make sure it didn't keep playing
-        b.wait_not_in_text(term_first_line, "localhost")
+        b.wait_not_in_text(term_first_line, "whoami")
         # Test if it can start playing again
         b.click("#player-play-pause")
 
