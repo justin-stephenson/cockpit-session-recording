@@ -8,6 +8,7 @@ Source:  https://github.com/Scribery/%{name}/releases/download/%{version}/%{name
 
 BuildArch: noarch
 BuildRequires: libappstream-glib
+BuildRequires: make
 Requires: cockpit-system
 Requires: tlog
 
