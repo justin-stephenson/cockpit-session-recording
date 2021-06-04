@@ -328,10 +328,11 @@ class TestApplication(MachineCase):
         b, _ = self._login()
         for occ in occ_dict:
             for term in occ_dict[occ]:
+                b.set_input_text(inp, "")
                 # enter the search term and wait for the results to return
                 b.set_input_text(inp, term)
-                time.sleep(5)
                 self.assertEqual(b.text(".pf-c-table").count("contractor"), occ)
+                time.sleep(5)
 
     def testSearch(self):
         self._filter(
